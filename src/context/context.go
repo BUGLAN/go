@@ -63,6 +63,9 @@ type Context interface {
 	// Deadline returns the time when work done on behalf of this context
 	// should be canceled. Deadline returns ok==false when no deadline is
 	// set. Successive calls to Deadline return the same results.
+	// Deadline返回代表上下文完成工作的时间
+	// 应该取消。当没有Deadline时返回ok==false
+	// set.连续调用Deadline返回相同的结果。
 	Deadline() (deadline time.Time, ok bool)
 
 	// Done returns a channel that's closed when work done on behalf of this
@@ -154,10 +157,12 @@ type Context interface {
 }
 
 // Canceled is the error returned by Context.Err when the context is canceled.
+// Canceled取消错误
 var Canceled = errors.New("context canceled")
 
 // DeadlineExceeded is the error returned by Context.Err when the context's
 // deadline passes.
+// 截止日期已过错误
 var DeadlineExceeded error = deadlineExceededError{}
 
 type deadlineExceededError struct{}
@@ -229,13 +234,16 @@ type CancelFunc func()
 //
 // Canceling this context releases resources associated with it, so code should
 // call cancel as soon as the operations running in this Context complete.
+// WithCancel返回一个parent的拷贝
 func WithCancel(parent Context) (ctx Context, cancel CancelFunc) {
+	// 创建一个cancelCtx
 	c := newCancelCtx(parent)
 	propagateCancel(parent, &c)
 	return &c, func() { c.cancel(true, Canceled) }
 }
 
 // newCancelCtx returns an initialized cancelCtx.
+// 返回一个初始化测cancelCtx
 func newCancelCtx(parent Context) cancelCtx {
 	return cancelCtx{Context: parent}
 }
@@ -244,26 +252,33 @@ func newCancelCtx(parent Context) cancelCtx {
 var goroutines int32
 
 // propagateCancel arranges for child to be canceled when parent is.
+// 当parent cancel 取消时, 将行为传播给 child
 func propagateCancel(parent Context, child canceler) {
+	// parent是否完成
 	done := parent.Done()
 	if done == nil {
+		// 还没有canceled 或者是根节点emptyCtx
 		return // parent is never canceled
 	}
 
 	select {
 	case <-done:
 		// parent is already canceled
+		// 已经取消了, 取消children context
 		child.cancel(false, parent.Err())
 		return
 	default:
 	}
 
+	// 向上寻找到最近的一个CancelCtx
 	if p, ok := parentCancelCtx(parent); ok {
 		p.mu.Lock()
 		if p.err != nil {
+			// parent 已经被取消
 			// parent has already been canceled
 			child.cancel(false, p.err)
 		} else {
+			// 初始化child. 进行一个初始化, 懒汉模式
 			if p.children == nil {
 				p.children = make(map[canceler]struct{})
 			}
@@ -271,6 +286,9 @@ func propagateCancel(parent Context, child canceler) {
 		}
 		p.mu.Unlock()
 	} else {
+		// 开了多少个goroutine
+		// 见 https://github.com/qcrao/Go-Questions/blob/master/%E6%A0%87%E5%87%86%E5%BA%93/context/context%20%E5%A6%82%E4%BD%95%E8%A2%AB%E5%8F%96%E6%B6%88.md
+		// 解决context是嵌套在其他结构体里面情况, 开启一个协程, 用来监听parent和child的完成情况
 		atomic.AddInt32(&goroutines, +1)
 		go func() {
 			select {
@@ -291,11 +309,19 @@ var cancelCtxKey int
 // parent.Done() matches that *cancelCtx. (If not, the *cancelCtx
 // has been wrapped in a custom implementation providing a
 // different done channel, in which case we should not bypass it.)
+// parentCancelCtx返回父类的底层*cancelCtx。
+// 它通过查找parent.Value(&cancelCtxKey)来查找
+// 最里面的封闭*cancelCtx，然后检查是否
+// parent.Done()匹配*cancelCtx。(如果不是，则*cancelCtx
+// 被包装在一个自定义实现中，提供了一个
+// 不同的完成通道，在这种情况下我们不应该绕过它。)
 func parentCancelCtx(parent Context) (*cancelCtx, bool) {
 	done := parent.Done()
 	if done == closedchan || done == nil {
 		return nil, false
 	}
+
+	// 	向上寻找到最近的一个cancelCtx
 	p, ok := parent.Value(&cancelCtxKey).(*cancelCtx)
 	if !ok {
 		return nil, false
@@ -311,11 +337,13 @@ func parentCancelCtx(parent Context) (*cancelCtx, bool) {
 
 // removeChild removes a context from its parent.
 func removeChild(parent Context, child canceler) {
+	// 向上获取到最近的CancelCtx
 	p, ok := parentCancelCtx(parent)
 	if !ok {
 		return
 	}
 	p.mu.Lock()
+	// 删除一个子context
 	if p.children != nil {
 		delete(p.children, child)
 	}
@@ -339,14 +367,15 @@ func init() {
 // A cancelCtx can be canceled. When canceled, it also cancels any children
 // that implement canceler.
 type cancelCtx struct {
-	Context
+	Context // 组合了Context方法
 
-	mu       sync.Mutex            // protects following fields
-	done     chan struct{}         // created lazily, closed by first cancel call
-	children map[canceler]struct{} // set to nil by the first cancel call
-	err      error                 // set to non-nil by the first cancel call
+	mu       sync.Mutex            // 互斥锁
+	done     chan struct{}         // 完成表示 created lazily, closed by first cancel call
+	children map[canceler]struct{} // 子context set to nil by the first cancel call
+	err      error                 // 发生错误是的err set to non-nil by the first cancel call
 }
 
+// Value 向上寻找相应的cancelCtx
 func (c *cancelCtx) Value(key interface{}) interface{} {
 	if key == &cancelCtxKey {
 		return c
@@ -354,8 +383,10 @@ func (c *cancelCtx) Value(key interface{}) interface{} {
 	return c.Context.Value(key)
 }
 
+// Done 初始化并返回cancelCtx.done
 func (c *cancelCtx) Done() <-chan struct{} {
 	c.mu.Lock()
+	// 懒汉模式初始化channel
 	if c.done == nil {
 		c.done = make(chan struct{})
 	}
@@ -364,6 +395,7 @@ func (c *cancelCtx) Done() <-chan struct{} {
 	return d
 }
 
+// Err return ctx.Err
 func (c *cancelCtx) Err() error {
 	c.mu.Lock()
 	err := c.err
@@ -386,8 +418,8 @@ func (c *cancelCtx) String() string {
 	return contextName(c.Context) + ".WithCancel"
 }
 
-// cancel closes c.done, cancels each of c's children, and, if
-// removeFromParent is true, removes c from its parent's children.
+// 取消关闭c。完成，消去c的每一个子元素，如果
+// removeFromParent为真，从父元素的子元素中移除c。
 func (c *cancelCtx) cancel(removeFromParent bool, err error) {
 	if err == nil {
 		panic("context: internal error: missing cancel error")
@@ -398,18 +430,22 @@ func (c *cancelCtx) cancel(removeFromParent bool, err error) {
 		return // already canceled
 	}
 	c.err = err
+	// 关闭channel
 	if c.done == nil {
 		c.done = closedchan
 	} else {
 		close(c.done)
 	}
+	// 递归取消所有子节点
 	for child := range c.children {
 		// NOTE: acquiring the child's lock while holding parent's lock.
 		child.cancel(false, err)
 	}
+	// 断开子节点
 	c.children = nil
 	c.mu.Unlock()
 
+	// 从父节点中删除自己
 	if removeFromParent {
 		removeChild(c.Context, c)
 	}
@@ -424,24 +460,39 @@ func (c *cancelCtx) cancel(removeFromParent bool, err error) {
 //
 // Canceling this context releases resources associated with it, so code should
 // call cancel as soon as the operations running in this Context complete.
+// WithDeadline返回一个调整了deadline的父上下文的副本
+// 不迟于d.如果parent的截止日期早于d，
+// WithDeadline(parent, d)在语义上等同于parent。返回的
+// context的Done通道在deadline过期时关闭，当返回时关闭
+// cancel函数被调用，或者当父上下文的Done通道被调用时
+// 关闭，以先发生的为准。
+//
+// 取消此上下文释放与之关联的资源，因此代码应该这样做
+// 在这个上下文中运行的操作一旦完成，就立即调用cancel。
 func WithDeadline(parent Context, d time.Time) (Context, CancelFunc) {
 	if cur, ok := parent.Deadline(); ok && cur.Before(d) {
 		// The current deadline is already sooner than the new one.
-		return WithCancel(parent)
+		// 如果父节点 context 的 deadline 早于指定时间。直接构建一个可取消的 context。
+		// 原因是一旦父节点超时，自动调用 cancel 函数，子节点也会随之取消。
+		// 所以不用单独处理子节点的计时器时间到了之后，自动调用 cancel 函数
 	}
+	// 初始化一个timeCtx
 	c := &timerCtx{
 		cancelCtx: newCancelCtx(parent),
 		deadline:  d,
 	}
+	// 传播取消给子节点
 	propagateCancel(parent, c)
 	dur := time.Until(d)
 	if dur <= 0 {
+		// cancel
 		c.cancel(true, DeadlineExceeded) // deadline has already passed
 		return c, func() { c.cancel(false, Canceled) }
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.err == nil {
+		// 增加timer的函数
 		c.timer = time.AfterFunc(dur, func() {
 			c.cancel(true, DeadlineExceeded)
 		})
@@ -470,12 +521,14 @@ func (c *timerCtx) String() string {
 }
 
 func (c *timerCtx) cancel(removeFromParent bool, err error) {
+	// 递归取消cancel, 并递归从父节点移除子节点
 	c.cancelCtx.cancel(false, err)
 	if removeFromParent {
 		// Remove this timerCtx from its parent cancelCtx's children.
 		removeChild(c.cancelCtx.Context, c)
 	}
 	c.mu.Lock()
+	// 停止timer并设置为nil
 	if c.timer != nil {
 		c.timer.Stop()
 		c.timer = nil
@@ -494,6 +547,7 @@ func (c *timerCtx) cancel(removeFromParent bool, err error) {
 // 		return slowOperation(ctx)
 // 	}
 func WithTimeout(parent Context, timeout time.Duration) (Context, CancelFunc) {
+	// WithDeadline 简单包装了一下
 	return WithDeadline(parent, time.Now().Add(timeout))
 }
 
@@ -546,6 +600,7 @@ func (c *valueCtx) String() string {
 		", val " + stringify(c.val) + ")"
 }
 
+// 向上从parent里面寻找值
 func (c *valueCtx) Value(key interface{}) interface{} {
 	if c.key == key {
 		return c.val
