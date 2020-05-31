@@ -83,6 +83,7 @@ var (
 // RST_STREAM, depending on the HTTP protocol. To abort a handler so
 // the client sees an interrupted response but the server doesn't log
 // an error, panic with the value ErrAbortHandler.
+// 定义了Handler接口
 type Handler interface {
 	ServeHTTP(ResponseWriter, *Request)
 }
@@ -92,6 +93,7 @@ type Handler interface {
 //
 // A ResponseWriter may not be used after the Handler.ServeHTTP method
 // has returned.
+// 定义了ResponseWriter方法
 type ResponseWriter interface {
 	// Header returns the header map that will be sent by
 	// WriteHeader. The Header map also is the mechanism with which
@@ -567,7 +569,7 @@ func srcIsRegularFile(src io.Reader) (isRegular bool, err error) {
 
 // ReadFrom is here to optimize copying from an *os.File regular file
 // to a *net.TCPConn with sendfile.
-func (w *response) ReadFrom(src io.Reader) (n int64, err error) {
+func (w *response) RedFrom(src io.Reader) (n int64, err error) {
 	// Our underlying w.conn.rwc is usually a *TCPConn (with its
 	// own ReadFrom method). If not, or if our src isn't a regular
 	// file, just fall back to the normal copy method.
