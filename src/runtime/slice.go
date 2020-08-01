@@ -10,28 +10,34 @@ import (
 	"unsafe"
 )
 
+// slice 结构体
 type slice struct {
-	array unsafe.Pointer
+	array unsafe.Pointer // 指向原数组
 	len   int
 	cap   int
 }
 
 // A notInHeapSlice is a slice backed by go:notinheap memory.
+// notInHeapSlice是由go:notinheap内存支持的片。
 type notInHeapSlice struct {
 	array *notInHeap
 	len   int
 	cap   int
 }
 
+// len 超出索引范围
 func panicmakeslicelen() {
 	panic(errorString("makeslice: len out of range"))
 }
 
+// cap 超出索引范围
 func panicmakeslicecap() {
 	panic(errorString("makeslice: cap out of range"))
 }
 
+// 创建切片, 返回的是一个指针
 func makeslice(et *_type, len, cap int) unsafe.Pointer {
+	// 算出需要多少内存空间
 	mem, overflow := math.MulUintptr(et.size, uintptr(cap))
 	if overflow || mem > maxAlloc || len < 0 || len > cap {
 		// NOTE: Produce a 'len out of range' error instead of a
@@ -46,9 +52,13 @@ func makeslice(et *_type, len, cap int) unsafe.Pointer {
 		panicmakeslicecap()
 	}
 
+	// 分配空间
+	// 从堆上还是栈上分配
+	// 返回一个unsafe.Pointer
 	return mallocgc(mem, et, true)
 }
 
+// 同上, 不过切片的长度和容量用的是int64
 func makeslice64(et *_type, len64, cap64 int64) unsafe.Pointer {
 	len := int(len64)
 	if int64(len) != len64 {
@@ -73,6 +83,16 @@ func makeslice64(et *_type, len64, cap64 int64) unsafe.Pointer {
 // to calculate where to write new values during an append.
 // TODO: When the old backend is gone, reconsider this decision.
 // The SSA backend might prefer the new length or to return only ptr/cap and save stack space.
+// growslice处理追加期间的切片增长。
+// 它将传递切片元素类型、旧切片和所需的新最小容量，
+// 它返回一个新的片，其中至少有这个容量，包含旧数据
+// 复制到里面。
+// 新切片的长度设置为旧切片的长度，
+// 没有达到新要求的容量。
+// 这是为了方便codegen。将立即使用旧切片的长度
+// 计算追加过程中新值的写入位置。
+// TODO:当旧的后端不存在时，请重新考虑这个决定。
+// SSA后端可能更喜欢新的长度，或者只返回ptr/cap并节省堆栈空间。
 func growslice(et *_type, old slice, cap int) slice {
 	if raceenabled {
 		callerpc := getcallerpc()
@@ -89,24 +109,30 @@ func growslice(et *_type, old slice, cap int) slice {
 	if et.size == 0 {
 		// append should not create a slice with nil pointer but non-zero len.
 		// We assume that append doesn't need to preserve old.array in this case.
+		// append不应创建指针为零但长度为非零的切片。
+		// 我们假设append不需要保存旧.array在这种情况下。
 		return slice{unsafe.Pointer(&zerobase), old.len, cap}
 	}
 
 	newcap := old.cap
 	doublecap := newcap + newcap
+	// 新容量大于旧容量两倍, 直接安装新容量分配
 	if cap > doublecap {
 		newcap = cap
 	} else {
+		// 旧长度小于1024个, 则直接为旧容量的两倍
 		if old.len < 1024 {
 			newcap = doublecap
 		} else {
 			// Check 0 < newcap to detect overflow
 			// and prevent an infinite loop.
+			// 按原有容量1.25倍增加, 直到超出新容量
 			for 0 < newcap && newcap < cap {
 				newcap += newcap / 4
 			}
 			// Set newcap to the requested cap when
 			// the newcap calculation overflowed.
+			// 溢出时设置新的容量为cap
 			if newcap <= 0 {
 				newcap = cap
 			}
@@ -119,6 +145,9 @@ func growslice(et *_type, old slice, cap int) slice {
 	// For 1 we don't need any division/multiplication.
 	// For sys.PtrSize, compiler will optimize division/multiplication into a shift by a constant.
 	// For powers of 2, use a variable shift.
+	// 对于1，我们不需要任何除法/乘法。
+	// 为系统PtrSize，编译器会将除法/乘法优化为按常数移位。
+	// 对于2的幂，使用可变移位。
 	switch {
 	case et.size == 1:
 		lenmem = uintptr(old.len)
@@ -185,15 +214,18 @@ func growslice(et *_type, old slice, cap int) slice {
 			bulkBarrierPreWriteSrcOnly(uintptr(p), uintptr(old.array), lenmem)
 		}
 	}
+	// 进行数据拷贝
 	memmove(p, old.array, lenmem)
-
+	// 返回新的指针
 	return slice{p, old.len, newcap}
 }
 
+// 是否是2的倍数
 func isPowerOfTwo(x uintptr) bool {
 	return x&(x-1) == 0
 }
 
+// 切片拷贝
 func slicecopy(to, fm slice, width uintptr) int {
 	if fm.len == 0 || to.len == 0 {
 		return 0
@@ -229,6 +261,7 @@ func slicecopy(to, fm slice, width uintptr) int {
 	return n
 }
 
+// 切片字符串的拷贝
 func slicestringcopy(to []byte, fm string) int {
 	if len(fm) == 0 || len(to) == 0 {
 		return 0

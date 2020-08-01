@@ -214,6 +214,11 @@ const (
 	// 32-bit, however, this is one less than 1<<32 because the
 	// number of bytes in the address space doesn't actually fit
 	// in a uintptr.
+	// maxAlloc是分配的最大大小。在64位上，
+	// 理论上可以分配1个<<heapAddrBits字节。打开
+	// 但是，这是一个小于1<<32的位，因为
+	// 地址空间中的字节数实际上不适合
+	// 在uintptr中。
 	maxAlloc = (1 << heapAddrBits) - (1-_64bit)*1
 
 	// The number of bits in a heap address, the size of heap
