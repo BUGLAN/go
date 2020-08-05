@@ -116,7 +116,7 @@ func growslice(et *_type, old slice, cap int) slice {
 
 	newcap := old.cap
 	doublecap := newcap + newcap
-	// 新容量大于旧容量两倍, 直接安装新容量分配
+	// 新容量大于旧容量两倍, 直接按照新容量分配
 	if cap > doublecap {
 		newcap = cap
 	} else {

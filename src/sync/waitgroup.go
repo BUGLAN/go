@@ -20,15 +20,20 @@ import (
 type WaitGroup struct {
 	noCopy noCopy
 
-	// 64-bit value: high 32 bits are counter, low 32 bits are waiter count.
-	// 64-bit atomic operations require 64-bit alignment, but 32-bit
-	// compilers do not ensure it. So we allocate 12 bytes and then use
-	// the aligned 8 bytes in them as state, and the other 4 as storage
-	// for the sema.
+// 64-bit value: high 32 bits are counter, low 32 bits are waiter count.
+// 64-bit atomic operations require 64-bit alignment, but 32-bit
+// compilers do not ensure it. So we allocate 12 bytes and then use
+// the aligned 8 bytes in them as state, and the other 4 as storage
+// for the sema.
+//64位值：高32位为计数器，低32位为等待计数。
+//64位原子操作需要64位对齐，但需要32位对齐
+//编译器不能确保它。所以我们分配12个字节然后使用
+//其中对齐的8个字节作为状态，其他4个字节作为存储
 	state1 [3]uint32
 }
 
 // state returns pointers to the state and sema fields stored within wg.state1.
+// state返回存储在中的state和sema字段的指针工作组状态1.
 func (wg *WaitGroup) state() (statep *uint64, semap *uint32) {
 	if uintptr(unsafe.Pointer(&wg.state1))%8 == 0 {
 		return (*uint64)(unsafe.Pointer(&wg.state1)), &wg.state1[2]
