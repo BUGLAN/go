@@ -30,16 +30,16 @@ const (
 )
 
 type hchan struct {
-	qcount   uint           // total data in the queue
-	dataqsiz uint           // size of the circular queue
-	buf      unsafe.Pointer // points to an array of dataqsiz elements
-	elemsize uint16
-	closed   uint32
-	elemtype *_type // element type
-	sendx    uint   // send index
-	recvx    uint   // receive index
-	recvq    waitq  // list of recv waiters
-	sendq    waitq  // list of send waiters
+	qcount   uint           // total data in the queue channel里面元素的数量
+	dataqsiz uint           // size of the circular queue 循环队列的长度
+	buf      unsafe.Pointer // points to an array of dataqsiz elements 指向底层循环数组的指针
+	elemsize uint16 // channel中元素大小
+	closed   uint32 // 是否关闭的标志
+	elemtype *_type // element type 元素类型
+	sendx    uint   // send index  已发送元素在循环数组中的索引
+	recvx    uint   // 等待接收的 goroutine 队列 等待接收的 goroutine 队列
+	recvq    waitq  // list of recv waiters  等待接收的 goroutine 队列
+	sendq    waitq  // list of send waiters 等待发送的 goroutine 队列
 
 	// lock protects all fields in hchan, as well as several
 	// fields in sudogs blocked on this channel.
@@ -50,8 +50,9 @@ type hchan struct {
 	lock mutex
 }
 
+// 双向链表
 type waitq struct {
-	first *sudog
+	first *sudog // sudog 对goroutine的封装
 	last  *sudog
 }
 
@@ -68,6 +69,7 @@ func makechan64(t *chantype, size int64) *hchan {
 	return makechan(t, int(size))
 }
 
+// 创建channel
 func makechan(t *chantype, size int) *hchan {
 	elem := t.elem
 
