@@ -134,14 +134,14 @@ type hmap struct {
 	// Make sure this stays in sync with the compiler's definition.
 	// 注意:hmap的格式也编码在cmd/compile/internal/gc/reflect.go中。
 	// 确保这与编译器的定义保持同步。
-	count     int // # live cells == size of map.  Must be first (used by len() builtin) 活单元格==地图的大小。必须是第一(由len()内置使用)
-	flags     uint8
-	B         uint8  // log_2 of # of buckets (can hold up to loadFactor * 2^B items) 指示bucket数组的大小 B的对数
+	count     int // map中元素的数量
+	flags     uint8 // 是否并发读写
+	B         uint8 //buckets数组的对数
 	noverflow uint16 // approximate number of overflow buckets; see incrnoverflow for details 溢出桶的大致数目;有关详细信息，请参见incrnoverflow
 	hash0     uint32 // hash seed hash 种子
 
 	buckets    unsafe.Pointer // array of 2^B Buckets. may be nil if count==0. 数组有2^B个桶 buckets数组的指针
-	oldbuckets unsafe.Pointer // previous bucket array of half the size, non-nil only when growing 前一个bucket数组的一半大小，只有在增长时是非nil
+	oldbuckets unsafe.Pointer // previous bucket array of half the size, non-nil only when growing 前一个bucket数组的一半大小，只有在增长时是非nil, 迁移使用的老的buckets数组
 	nevacuate  uintptr        // progress counter for evacuation (buckets less than this have been evacuated) 疏散进度计数器(少于这个桶已被疏散)
 
 	extra *mapextra // optional fields 可选的字段
