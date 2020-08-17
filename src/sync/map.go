@@ -36,18 +36,27 @@ type Map struct {
 	// Entries stored in read may be updated concurrently without mu, but updating
 	// a previously-expunged entry requires that the entry be copied to the dirty
 	// map and unexpunged with mu held.
-	read atomic.Value // readOnly
+	// read包含地图中安全的部分内容
+	//并发访问(持有或不持有mu)。
+	//
+	//读取字段本身加载时总是安全的，但只能存储在其中
+	//
+	//存储在read中的项可以不使用mu并发更新，但要更新
+	//先前删除的条目要求将该条目复制到dirty中
+	//地图和未删除与mu持有。
+	read atomic.Value // readOnly 结构体
 
-	// dirty contains the portion of the map's contents that require mu to be
-	// held. To ensure that the dirty map can be promoted to the read map quickly,
-	// it also includes all of the non-expunged entries in the read map.
+
+	// dirty包含地图内容中要求mu为的部分
+	//。为确保dirty地图能快速提升为read地图，
+	//它还包括read映射中所有未删除的条目。
 	//
-	// Expunged entries are not stored in the dirty map. An expunged entry in the
-	// clean map must be unexpunged and added to the dirty map before a new value
-	// can be stored to it.
+	// 删除的条目不存储在dirty映射中。控件中删除的条目
+	// clean map必须在一个新值之前未删除并添加到dirty map中
+	// 可以存储到它。
 	//
-	// If the dirty map is nil, the next write to the map will initialize it by
-	// making a shallow copy of the clean map, omitting stale entries.
+	// 如果脏映射为nil，下一次写入映射将初始化它
+	// 绘制干净地图的浅拷贝，省略陈旧条目。
 	dirty map[interface{}]*entry
 
 	// misses counts the number of loads since the read map was last updated that
@@ -56,17 +65,26 @@ type Map struct {
 	// Once enough misses have occurred to cover the cost of copying the dirty
 	// map, the dirty map will be promoted to the read map (in the unamended
 	// state) and the next store to the map will make a new dirty copy.
-	misses int
+	// misses计数自read映射最后一次更新以来的加载次数
+	//需要锁定mu以确定钥匙是否存在。
+	//
+	//一旦错过的次数足够多，就可以弥补复制脏文件的成本
+	//map中，脏映射将提升为读映射(在未修改的映射中)
+	//映射的下一个存储将生成一个新的脏拷贝。
+	misses int // 主要记录read读取不到数据加锁读取read map以及dirty map的次数，当misses等于dirty的长度时，会将dirty复制到read
 }
 
 // readOnly is an immutable struct stored atomically in the Map.read field.
+// readOnly是一个不可变结构，自动存储在映射中的read 字段
 type readOnly struct {
-	m       map[interface{}]*entry
-	amended bool // true if the dirty map contains some key not in m.
+	m       map[interface{}]*entry // map存放数据
+	amended bool // 如果数据在dirty中但没有在read中，该值为true,作为修改标识
 }
 
 // expunged is an arbitrary pointer that marks entries which have been deleted
 // from the dirty map.
+// expunged是一个任意指针，用来标记已经删除的条目
+//从脏地图。
 var expunged = unsafe.Pointer(new(interface{}))
 
 // An entry is a slot in the map corresponding to a particular key.
@@ -89,6 +107,9 @@ type entry struct {
 	// p != expunged. If p == expunged, an entry's associated value can be updated
 	// only after first setting m.dirty[key] = e so that lookups using the dirty
 	// map find the entry.
+	// nil: 表示为被删除，调用Delete()可以将read map中的元素置为nil
+	// expunged: 也是表示被删除，但是该键只在read而没有在dirty中，这种情况出现在将read复制到dirty中，即复制的过程会先将nil标记为expunged，然后不将其复制到dirty
+	//  其他: 表示存着真正的数据
 	p unsafe.Pointer // *interface{}
 }
 
@@ -99,21 +120,34 @@ func newEntry(i interface{}) *entry {
 // Load returns the value stored in the map for a key, or nil if no
 // value is present.
 // The ok result indicates whether value was found in the map.
+// Load返回存储在map中的键值，如果没有，返回nil
+// 值是存在的。
+// ok结果表示是否在映射中找到值。
 func (m *Map) Load(key interface{}) (value interface{}, ok bool) {
 	read, _ := m.read.Load().(readOnly)
+	// 从read中读取数据
 	e, ok := read.m[key]
+	// 如果read中不存在且表示数据在dirty中
 	if !ok && read.amended {
 		m.mu.Lock()
 		// Avoid reporting a spurious miss if m.dirty got promoted while we were
 		// blocked on m.mu. (If further loads of the same key will not miss, it's
 		// not worth copying the dirty map for this key.)
+		// 避免报告虚假的遗漏，如果m。dirty得到了晋升，而我们是
+		// 封锁m.mu。(如果进一步加载相同的键不会错过，它是
+		// 不值得为这个键复制脏映射。)
+		// 为了准确性, 加锁再读一次
 		read, _ = m.read.Load().(readOnly)
 		e, ok = read.m[key]
 		if !ok && read.amended {
+			// 从dirty中读取数据
 			e, ok = m.dirty[key]
 			// Regardless of whether the entry was present, record a miss: this key
 			// will take the slow path until the dirty map is promoted to the read
 			// map.
+			//无论条目是否存在，记录一个miss: this key
+			//将采用慢路径，直到脏映射升级为read map
+			//
 			m.missLocked()
 		}
 		m.mu.Unlock()
@@ -124,6 +158,7 @@ func (m *Map) Load(key interface{}) (value interface{}, ok bool) {
 	return e.load()
 }
 
+// load 进行一反序列化
 func (e *entry) load() (value interface{}, ok bool) {
 	p := atomic.LoadPointer(&e.p)
 	if p == nil || p == expunged {
@@ -133,7 +168,10 @@ func (e *entry) load() (value interface{}, ok bool) {
 }
 
 // Store sets the value for a key.
+// 存储数据
 func (m *Map) Store(key, value interface{}) {
+	// 如果read存在这个键，并且这个entry没有被标记删除，尝试直接写入,写入成功，则结束
+	// 第一次检测
 	read, _ := m.read.Load().(readOnly)
 	if e, ok := read.m[key]; ok && e.tryStore(&value) {
 		return
@@ -166,6 +204,10 @@ func (m *Map) Store(key, value interface{}) {
 //
 // If the entry is expunged, tryStore returns false and leaves the entry
 // unchanged.
+// tryStore在条目未被删除时存储一个值。
+//
+//如果条目被删除，tryStore将返回false并离开该条目
+// 不变。
 func (e *entry) tryStore(i *interface{}) bool {
 	for {
 		p := atomic.LoadPointer(&e.p)
@@ -182,6 +224,10 @@ func (e *entry) tryStore(i *interface{}) bool {
 //
 // If the entry was previously expunged, it must be added to the dirty map
 // before m.mu is unlocked.
+// unexpungeLocked确保该条目没有标记为expunged。
+//
+//如果条目先前被删除，则必须将其添加到dirty映射中
+// m。μ是解锁。
 func (e *entry) unexpungeLocked() (wasExpunged bool) {
 	return atomic.CompareAndSwapPointer(&e.p, expunged, nil)
 }
@@ -209,6 +255,8 @@ func (m *Map) LoadOrStore(key, value interface{}) (actual interface{}, loaded bo
 	m.mu.Lock()
 	read, _ = m.read.Load().(readOnly)
 	if e, ok := read.m[key]; ok {
+		// unexpungelocc确保元素没有被标记为删除
+		// 判断元素被标识为删除
 		if e.unexpungeLocked() {
 			m.dirty[key] = e
 		}
@@ -217,12 +265,14 @@ func (m *Map) LoadOrStore(key, value interface{}) (actual interface{}, loaded bo
 		actual, loaded, _ = e.tryLoadOrStore(value)
 		m.missLocked()
 	} else {
+		// read.amended==false,说明dirty map为空，需要将read map 复制一份到dirty map
 		if !read.amended {
 			// We're adding the first new key to the dirty map.
 			// Make sure it is allocated and mark the read-only map as incomplete.
 			m.dirtyLocked()
 			m.read.Store(readOnly{m: read.m, amended: true})
 		}
+		// 设置元素进入dirty map，此时dirty map拥有read map和最新设置的元素
 		m.dirty[key] = newEntry(value)
 		actual, loaded = value, false
 	}
@@ -236,6 +286,11 @@ func (m *Map) LoadOrStore(key, value interface{}) (actual interface{}, loaded bo
 //
 // If the entry is expunged, tryLoadOrStore leaves the entry unchanged and
 // returns with ok==false.
+// tryLoadOrStore在条目不存在时自动加载或存储值
+// 删除。
+//
+//如果条目被删除，tryLoadOrStore将保持条目不变，并且
+//返回ok==false。
 func (e *entry) tryLoadOrStore(i interface{}) (actual interface{}, loaded, ok bool) {
 	p := atomic.LoadPointer(&e.p)
 	if p == expunged {
@@ -336,11 +391,13 @@ func (m *Map) Range(f func(key, value interface{}) bool) {
 	}
 }
 
+// 穿透计数
 func (m *Map) missLocked() {
 	m.misses++
 	if m.misses < len(m.dirty) {
 		return
 	}
+	// 将数据拷贝到read中, 此步骤是加锁完成的
 	m.read.Store(readOnly{m: m.dirty})
 	m.dirty = nil
 	m.misses = 0
