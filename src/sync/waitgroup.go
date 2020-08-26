@@ -17,8 +17,15 @@ import (
 // Wait can be used to block until all goroutines have finished.
 //
 // A WaitGroup must not be copied after first use.
+//等待组等待goroutines集合完成。
+//主goroutine调用Add来设置的数量
+//等歌舞剧。然后是每个goroutines
+//在完成时运行和调用完成。与此同时，
+//等待可以用来阻止，直到所有goroutines完成。
+//
+//不能在第一次使用后复制等待组。
 type WaitGroup struct {
-	noCopy noCopy
+	noCopy noCopy // empty struct{}
 
 // 64-bit value: high 32 bits are counter, low 32 bits are waiter count.
 // 64-bit atomic operations require 64-bit alignment, but 32-bit
@@ -34,7 +41,9 @@ type WaitGroup struct {
 
 // state returns pointers to the state and sema fields stored within wg.state1.
 // state返回存储在中的state和sema字段的指针工作组状态1.
+// 获取state
 func (wg *WaitGroup) state() (statep *uint64, semap *uint32) {
+	// 内存对其, 其中对齐的8个字节作为状态，其他4个字节作为存储
 	if uintptr(unsafe.Pointer(&wg.state1))%8 == 0 {
 		return (*uint64)(unsafe.Pointer(&wg.state1)), &wg.state1[2]
 	} else {
@@ -56,6 +65,7 @@ func (wg *WaitGroup) state() (statep *uint64, semap *uint32) {
 // new Add calls must happen after all previous Wait calls have returned.
 // See the WaitGroup example.
 func (wg *WaitGroup) Add(delta int) {
+	// 获取状态和信号量
 	statep, semap := wg.state()
 	if race.Enabled {
 		_ = *statep // trigger nil deref early
@@ -66,8 +76,11 @@ func (wg *WaitGroup) Add(delta int) {
 		race.Disable()
 		defer race.Enable()
 	}
+	// 计算出值
 	state := atomic.AddUint64(statep, uint64(delta)<<32)
+	// couter计数
 	v := int32(state >> 32)
+	// 等待计数器
 	w := uint32(state)
 	if race.Enabled && delta > 0 && v == int32(delta) {
 		// The first increment must be synchronized with Wait.
@@ -75,12 +88,17 @@ func (wg *WaitGroup) Add(delta int) {
 		// several concurrent wg.counter transitions from 0.
 		race.Read(unsafe.Pointer(semap))
 	}
+	// Done太多了
 	if v < 0 {
 		panic("sync: negative WaitGroup counter")
 	}
+
+	// wait了之后, 再调用了Add
 	if w != 0 && delta > 0 && v == int32(delta) {
 		panic("sync: WaitGroup misuse: Add called concurrently with Wait")
 	}
+
+	// add 成功后，并且wait是0 直接返回
 	if v > 0 || w == 0 {
 		return
 	}
@@ -93,8 +111,10 @@ func (wg *WaitGroup) Add(delta int) {
 		panic("sync: WaitGroup misuse: Add called concurrently with Wait")
 	}
 	// Reset waiters count to 0.
+	// 重设
 	*statep = 0
 	for ; w != 0; w-- {
+		// 信号量消息
 		runtime_Semrelease(semap, false, 0)
 	}
 }
@@ -113,8 +133,10 @@ func (wg *WaitGroup) Wait() {
 	}
 	for {
 		state := atomic.LoadUint64(statep)
+		// 获取couter计数, 等待计数器
 		v := int32(state >> 32)
 		w := uint32(state)
+		// 无需等待
 		if v == 0 {
 			// Counter is 0, no need to wait.
 			if race.Enabled {
@@ -124,6 +146,7 @@ func (wg *WaitGroup) Wait() {
 			return
 		}
 		// Increment waiters count.
+		// 增加wait 计数
 		if atomic.CompareAndSwapUint64(statep, state, state+1) {
 			if race.Enabled && w == 0 {
 				// Wait must be synchronized with the first Add.
@@ -132,6 +155,7 @@ func (wg *WaitGroup) Wait() {
 				// otherwise concurrent Waits will race with each other.
 				race.Write(unsafe.Pointer(semap))
 			}
+			// 接收信号量
 			runtime_Semacquire(semap)
 			if *statep != 0 {
 				panic("sync: WaitGroup is reused before previous Wait has returned")
