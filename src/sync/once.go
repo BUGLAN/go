@@ -16,7 +16,7 @@ type Once struct {
 	// Placing done first allows more compact instructions on some architectures (amd64/x86),
 	// and fewer instructions (to calculate offset) on other architectures.
 	done uint32
-	m    Mutex
+	m    Mutex // 互斥锁
 }
 
 // Do calls the function f if and only if Do is being called for the
@@ -52,6 +52,7 @@ func (o *Once) Do(f func()) {
 	// This is why the slow path falls back to a mutex, and why
 	// the atomic.StoreUint32 must be delayed until after f returns.
 
+	// 没有执行的话, 执行
 	if atomic.LoadUint32(&o.done) == 0 {
 		// Outlined slow-path to allow inlining of the fast-path.
 		o.doSlow(f)
@@ -62,6 +63,7 @@ func (o *Once) doSlow(f func()) {
 	o.m.Lock()
 	defer o.m.Unlock()
 	if o.done == 0 {
+		// 这里怕f()panic, 所以加上defer, 保证一定只执行一次
 		defer atomic.StoreUint32(&o.done, 1)
 		f()
 	}
